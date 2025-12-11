@@ -1,0 +1,136 @@
+FROM nvidia/cuda:12.9.0-cudnn-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    EFA_INSTALLER_VERSION=1.44.0 \
+    AWS_OFI_NCCL_VERSION=1.16.2
+
+# Install Python 3.12 and system dependencies
+RUN apt-get update && apt-get install -y \
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y \
+    python3.12 \
+    python3.12-dev \
+    python3-pip \
+    build-essential \
+    gcc \
+    git \
+    wget \
+    curl \
+    vim \
+    htop \
+    openssh-server \
+    openssh-client \
+    pciutils \
+    environment-modules \
+    tcl \
+    kmod \
+    autoconf \
+    libtool \
+    automake \
+    cmake \
+    apt-utils \
+    libhwloc-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install DCGM (requires CUDA repo which is already in base image)
+RUN apt-get update && apt-get install -y datacenter-gpu-manager && rm -rf /var/lib/apt/lists/*
+
+# Set Python 3.12 as default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
+    update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
+
+# Install pip for Python 3.12
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
+
+# Install PyTorch 2.8.0 with CUDA 12.9
+RUN pip3 install torch==2.8.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129
+
+# Install libnl packages required by EFA
+RUN apt-get update && apt-get install -y \
+    libnl-3-200 \
+    libnl-3-dev \
+    libnl-route-3-200 \
+    libnl-route-3-dev \
+    udev \
+    iproute2 \
+    ethtool \
+    dmidecode \
+    libevent-2.1-7 \
+    libevent-core-2.1-7 \
+    libevent-pthreads-2.1-7 \
+    libevent-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install EFA drivers
+RUN cd /tmp && \
+    curl -O https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz && \
+    tar -xf aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz && \
+    cd aws-efa-installer && \
+    ./efa_installer.sh -y -g -d --skip-kmod --no-verify --skip-limit-conf && \
+    ldconfig && \
+    rm -rf /tmp/aws-efa-installer /var/lib/apt/lists/*
+
+ENV LD_LIBRARY_PATH=/opt/amazon/efa/lib:$LD_LIBRARY_PATH
+ENV PATH=/opt/amazon/efa/bin:/opt/amazon/openmpi/bin:$PATH
+
+# Install AWS OFI NCCL plugin
+RUN cd /tmp && \
+    curl -LO https://github.com/aws/aws-ofi-nccl/archive/refs/tags/v${AWS_OFI_NCCL_VERSION}.tar.gz && \
+    tar -xzf v${AWS_OFI_NCCL_VERSION}.tar.gz && \
+    rm v${AWS_OFI_NCCL_VERSION}.tar.gz && \
+    cd aws-ofi-nccl-${AWS_OFI_NCCL_VERSION} && \
+    ./autogen.sh && \
+    ./configure --prefix=/opt/amazon/efa \
+    --with-libfabric=/opt/amazon/efa \
+    --with-cuda=/usr/local/cuda \
+    --enable-platform-aws \
+    --with-mpi=/opt/amazon/openmpi && \
+    make -j$(nproc) install && \
+    rm -rf /tmp/aws-ofi-nccl-${AWS_OFI_NCCL_VERSION}
+
+# Configure library paths
+RUN echo "/opt/amazon/openmpi/lib" >> /etc/ld.so.conf.d/efa.conf && \
+    echo "/usr/local/lib" >> /etc/ld.so.conf.d/local.conf && \
+    ldconfig
+
+# Set NCCL configuration
+RUN echo "NCCL_SOCKET_IFNAME=^docker0,lo" >> /etc/nccl.conf
+
+# Install NCCL tests
+RUN git clone https://github.com/NVIDIA/nccl-tests.git /opt/nccl-tests && \
+    cd /opt/nccl-tests && \
+    make MPI=1 MPI_HOME=/opt/amazon/openmpi CUDA_HOME=/usr/local/cuda && \
+    mkdir -p /usr/local/bin && \
+    ln -sf /opt/nccl-tests /usr/local/bin/nccl-tests
+
+# Configure SSH for MPI
+RUN mkdir -p /var/run/sshd && \
+    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+
+# Environment variables
+ENV NCCL_DEBUG=VERSION \
+    CUDA_HOME=/usr/local/cuda \
+    EFA_PATH=/opt/amazon/efa \
+    OPEN_MPI_PATH=/opt/amazon/openmpi \
+    LD_LIBRARY_PATH="/usr/local/lib:/usr/local/cuda/lib64:/opt/amazon/efa/lib:${LD_LIBRARY_PATH}" \
+    PATH=/opt/amazon/efa/bin:/opt/amazon/openmpi/bin:/usr/local/cuda/bin:$PATH \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    OMPI_MCA_pml=^cm,ucx \
+    OMPI_MCA_btl=tcp,self \
+    OMPI_MCA_btl_tcp_if_exclude=lo,docker0 \
+    OPAL_PREFIX=/opt/amazon/openmpi \
+    NCCL_SOCKET_IFNAME=^docker,lo
+
+# Install SageMaker training toolkit and dependencies
+RUN pip3 install \
+    mlflow \
+    "psutil>=5.9.0" \
+    "sagemaker-mlflow==0.1.0" \
+    sagemaker-pytorch-training \
+    mpi4py
