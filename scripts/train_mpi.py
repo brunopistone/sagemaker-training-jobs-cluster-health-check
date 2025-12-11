@@ -613,22 +613,22 @@ def log_health_check_summary(
 
 def setup_mlflow(mlflow_uri, mlflow_experiment_name):
     """Set up MLflow tracking.
-    
+
     Args:
         mlflow_uri: MLflow tracking URI
         mlflow_experiment_name: MLflow experiment name
-    
+
     Returns:
         bool: True if setup successful, False otherwise
     """
     logger.info("Initializing MLflow")
     mlflow.set_tracking_uri(mlflow_uri)
     mlflow.set_experiment(mlflow_experiment_name)
-    
+
     current_datetime = datetime.now(timezone.utc)
     formatted_datetime = current_datetime.strftime("%Y-%m-%d-%H-%M")
     run_name = f"health-check-{formatted_datetime}"
-    
+
     mlflow.start_run(run_name=run_name)
     logger.info(f"MLflow run started: {run_name}")
     return True
@@ -644,12 +644,20 @@ def export_to_mlflow(cluster_metrics, cluster_summary):
     logger.info("Exporting metrics to MLflow...")
 
     # Log cluster-level parameters
-    mlflow.log_params({
-        "total_nodes": cluster_metrics.get("cluster_info", {}).get("cluster_topology", {}).get("total_nodes", 0),
-        "gpus_per_node": cluster_metrics.get("cluster_info", {}).get("cluster_topology", {}).get("gpus_per_node", 0),
-        "expected_total_gpus": cluster_metrics.get("cluster_info", {}).get("expected_total_gpus", 0),
-        "overall_status": cluster_summary["overall_status"],
-    })
+    mlflow.log_params(
+        {
+            "total_nodes": cluster_metrics.get("cluster_info", {})
+            .get("cluster_topology", {})
+            .get("total_nodes", 0),
+            "gpus_per_node": cluster_metrics.get("cluster_info", {})
+            .get("cluster_topology", {})
+            .get("gpus_per_node", 0),
+            "expected_total_gpus": cluster_metrics.get("cluster_info", {}).get(
+                "expected_total_gpus", 0
+            ),
+            "overall_status": cluster_summary["overall_status"],
+        }
+    )
 
     # Log test results
     for test_name, result in cluster_summary["test_results"].items():
@@ -663,20 +671,36 @@ def export_to_mlflow(cluster_metrics, cluster_summary):
     # Log metrics from all nodes
     for node_name, node_data in cluster_metrics.get("nodes", {}).items():
         node_prefix = node_name
-        
+
         # Log GPU metrics per node
         for gpu_id, gpu_data in node_data.get("gpu", {}).items():
-            mlflow.log_metrics({
-                f"{node_prefix}_{gpu_id}_temperature_c": gpu_data.get("temperature_c", 0) or 0,
-                f"{node_prefix}_{gpu_id}_utilization_percent": gpu_data.get("utilization_percent", 0) or 0,
-                f"{node_prefix}_{gpu_id}_memory_used_mb": gpu_data["memory_used_mb"],
-            })
-        
+            mlflow.log_metrics(
+                {
+                    f"{node_prefix}_{gpu_id}_temperature_c": gpu_data.get(
+                        "temperature_c", 0
+                    )
+                    or 0,
+                    f"{node_prefix}_{gpu_id}_utilization_percent": gpu_data.get(
+                        "utilization_percent", 0
+                    )
+                    or 0,
+                    f"{node_prefix}_{gpu_id}_memory_used_mb": gpu_data[
+                        "memory_used_mb"
+                    ],
+                }
+            )
+
         # Log system metrics per node
-        mlflow.log_metrics({
-            f"{node_prefix}_system_memory_available_gb": node_data["system"]["memory"]["available_gb"],
-            f"{node_prefix}_system_cpu_usage_percent": node_data["system"]["cpu"]["usage_percent"],
-        })
+        mlflow.log_metrics(
+            {
+                f"{node_prefix}_system_memory_available_gb": node_data["system"][
+                    "memory"
+                ]["available_gb"],
+                f"{node_prefix}_system_cpu_usage_percent": node_data["system"]["cpu"][
+                    "usage_percent"
+                ],
+            }
+        )
 
     # Log full metrics as artifact
     mlflow.log_dict(cluster_metrics, "health_check_metrics.json")
@@ -766,14 +790,16 @@ def run_health_checks(
         time.sleep(1)
         metrics_file = os.path.join(metrics_dir, "health_check_metrics.json")
         if os.path.exists(metrics_file):
-            with open(metrics_file, 'r') as f:
+            with open(metrics_file, "r") as f:
                 cluster_metrics = json.load(f)
             cluster_summary = cluster_metrics.get("cluster_summary", summary)
             if setup_mlflow(mlflow_uri, mlflow_experiment_name):
                 export_to_mlflow(cluster_metrics, cluster_summary)
                 mlflow.end_run()
         else:
-            logger.warning(f"Metrics file not found: {metrics_file}, skipping MLflow export")
+            logger.warning(
+                f"Metrics file not found: {metrics_file}, skipping MLflow export"
+            )
 
     logger.info(f"Rank {rank}: run_health_checks completed, returning metrics")
     sys.stdout.flush()
@@ -801,16 +827,22 @@ def main():
         "--dcgm-level3", type=lambda x: x.lower() == "true", default=True
     )
     parser.add_argument(
-        "--export-mlflow", type=lambda x: x.lower() == "true", default=False,
-        help="Export metrics to MLflow (default: false)"
+        "--export-mlflow",
+        type=lambda x: x.lower() == "true",
+        default=False,
+        help="Export metrics to MLflow (default: false)",
     )
     parser.add_argument(
-        "--mlflow-uri", type=str, default=None,
-        help="MLflow tracking URI (default: None)"
+        "--mlflow-uri",
+        type=str,
+        default=None,
+        help="MLflow tracking URI (default: None)",
     )
     parser.add_argument(
-        "--mlflow-experiment-name", type=str, default="sagemaker-health-checks",
-        help="MLflow experiment name (default: sagemaker-health-checks)"
+        "--mlflow-experiment-name",
+        type=str,
+        default="sagemaker-health-checks",
+        help="MLflow experiment name (default: sagemaker-health-checks)",
     )
     args = parser.parse_args()
     logger.info("Starting SageMaker Training Cluster Pre-flight Health Checks (MPI)")
