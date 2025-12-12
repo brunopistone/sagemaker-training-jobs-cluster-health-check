@@ -128,7 +128,8 @@ ENV NCCL_DEBUG=VERSION \
     NCCL_SOCKET_IFNAME=^docker,lo
 
 # Install SageMaker training toolkit and dependencies
-RUN pip3 install \
+RUN pip3 install --ignore-installed blinker && \
+    pip3 install \
     mlflow \
     "psutil>=5.9.0" \
     "sagemaker-mlflow==0.1.0" \
