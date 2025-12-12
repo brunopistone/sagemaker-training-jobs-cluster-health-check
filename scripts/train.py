@@ -3,7 +3,6 @@ import argparse
 from datetime import datetime, timedelta, timezone
 import json
 import logging
-import mlflow
 import os
 import pickle
 import psutil
@@ -1225,17 +1224,26 @@ def setup_mlflow(mlflow_uri, mlflow_experiment_name):
     Returns:
         bool: True if setup successful, False otherwise
     """
-    logger.info("Initializing MLflow")
-    mlflow.set_tracking_uri(mlflow_uri)
-    mlflow.set_experiment(mlflow_experiment_name)
+    try:
+        import mlflow
 
-    current_datetime = datetime.now(timezone.utc)
-    formatted_datetime = current_datetime.strftime("%Y-%m-%d-%H-%M")
-    run_name = f"health-check-{formatted_datetime}"
+        logger.info("Initializing MLflow")
+        mlflow.set_tracking_uri(mlflow_uri)
+        mlflow.set_experiment(mlflow_experiment_name)
 
-    mlflow.start_run(run_name=run_name)
-    logger.info(f"MLflow run started: {run_name}")
-    return True
+        current_datetime = datetime.now(timezone.utc)
+        formatted_datetime = current_datetime.strftime("%Y-%m-%d-%H-%M")
+        run_name = f"health-check-{formatted_datetime}"
+
+        mlflow.start_run(run_name=run_name)
+        logger.info(f"MLflow run started: {run_name}")
+        return True
+    except ImportError:
+        logger.error("MLflow is not installed. Cannot export metrics to MLflow.")
+        return False
+    except Exception as e:
+        logger.error(f"Failed to initialize MLflow: {e}")
+        return False
 
 
 def export_to_mlflow(cluster_metrics, cluster_summary):
