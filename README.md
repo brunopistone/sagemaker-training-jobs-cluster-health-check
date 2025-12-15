@@ -117,21 +117,22 @@ This tool runs **before** your actual training job to validate that your SageMak
 
 1. **Login to ECR (if using AWS SageMaker base image)**
 
-   ```bash
-   aws ecr get-login-password --region <REGION> | docker login --username AWS --password-stdin <IMAGE_URI>
-   ```
+```bash
+aws ecr get-login-password --region <REGION> | docker login --username AWS --password-stdin <IMAGE_URI>
+```
 
 2. **Build and push container**
 
-   ```bash
-   cd container
-   ./create-image.sh sagemaker-cluster-test latest
-   ```
+```bash
+cd container
+./create-image.sh sagemaker-cluster-test latest
+```
 
 3. **Run health checks**
-   - Open `notebook.ipynb`
-   - Update networking configuration (subnet/security group IDs)
-   - Execute cells to launch training job
+
+- Open `notebook.ipynb`
+- Update networking configuration (subnet/security group IDs)
+- Execute cells to launch training job
 
 ## What It Checks
 
@@ -235,3 +236,417 @@ These packages enable:
 - Docker installed
 - SageMaker execution role with ECR permissions
 - VPC with EFA-enabled subnets for multi-node jobs
+
+## Output
+
+Example json output:
+
+```json
+{
+  "timestamp": "2025-12-03T17:54:41.475022+00:00",
+  "cluster_info": {
+    "data_completeness": "complete",
+    "note": "Data from all 2 nodes",
+    "expected_total_gpus": 8,
+    "cluster_topology": {
+      "total_nodes": 2,
+      "gpus_per_node": 4,
+      "processes_per_node": 4
+    }
+  },
+  "cluster_summary": {
+    "overall_status": "PASS",
+    "test_results": {
+      "gpu_detection": true,
+      "efa_network": true,
+      "nccl_communication": true,
+      "dcgm_basic": true,
+      "dcgm_extended": true
+    },
+    "cluster_info": {},
+    "performance_summary": {
+      "distributed_all_reduce_bandwidth_gbps": 1.81
+    },
+    "issues": [],
+    "recommendations": [
+      "Cluster is ready for distributed training"
+    ]
+  },
+  "nodes": {
+    "node_0": {
+      "timestamp": "2025-12-03T17:54:41.475022+00:00",
+      "node_info": {
+        "world_size": 8,
+        "rank": 0,
+        "local_rank": 0,
+        "hostname": "ip-10-2-252-142.ec2.internal",
+        "current_host": "algo-1",
+        "host_rank": 0,
+        "host_count": 2,
+        "gpus_per_host": 4
+      },
+      "summary": {
+        "overall_status": "PASS",
+        "test_results": {
+          "gpu_detection": true,
+          "efa_network": true,
+          "nccl_communication": true,
+          "dcgm_basic": true,
+          "dcgm_extended": true
+        },
+        "cluster_info": {},
+        "performance_summary": {
+          "distributed_all_reduce_bandwidth_gbps": 1.81
+        },
+        "issues": [],
+        "recommendations": [
+          "Cluster is ready for distributed training"
+        ]
+      },
+      "gpu": {
+        "gpu_0": {
+          "name": "NVIDIA A10G",
+          "driver_version": "570.195.03",
+          "memory_total_mb": 23028,
+          "memory_used_mb": 254,
+          "memory_free_mb": 22583,
+          "temperature_c": 22,
+          "utilization_percent": 2,
+          "power_draw_w": 22.75
+        },
+        "gpu_1": {
+          "name": "NVIDIA A10G",
+          "driver_version": "570.195.03",
+          "memory_total_mb": 23028,
+          "memory_used_mb": 254,
+          "memory_free_mb": 22583,
+          "temperature_c": 22,
+          "utilization_percent": 0,
+          "power_draw_w": 21.16
+        },
+        ...
+      },
+      "system": {
+        "memory": {
+          "total_gb": 186.7,
+          "available_gb": 170.84,
+          "used_percent": 8.5
+        },
+        "disk": {
+          "total_gb": 119.94,
+          "free_gb": 78.73,
+          "used_percent": 34.36
+        },
+        "cpu": {
+          "usage_percent": 0.3,
+          "count": 48
+        }
+      },
+      "network": {
+        "aws_ofi_nccl_plugin": {
+          "installed": true,
+          "path": "/opt/amazon/ofi-nccl/lib/x86_64-linux-gnu/libnccl-net.so"
+        },
+        "efa_available": true,
+        "efa_providers": [
+          "provider: efa",
+          "provider: efa",
+          "provider: efa"
+        ],
+        "efa_provider_count": 3,
+        "efa_communication_test": {
+          "success": true,
+          "raw_output": "bytes   #sent   #ack     total       time     MB/sec    usec/xfer   Mxfers/sec\n64      10      =10      1.2k        0.00s      1.13      56.65       0.02\n256     10      =10      5k          0.00s      4.58      55.90       0.02\n1k      10      =10      20k         0.00s     18.35      55.80       0.02\n4k      10      =10      80k         0.00s     68.15      60.10       0.02\n",
+          "test_role": "server",
+          "rank": 0
+        }
+      },
+      "nccl": {
+        "nccl_tests_available": true,
+        "communication_tests": {
+          "distributed_all_reduce": {
+            "success": true,
+            "test_type": "distributed",
+            "processes_tested": 8,
+            "results": [
+              {
+                "size_bytes": 1024,
+                "bandwidth_gbps": 0.0,
+                "latency_ms": 0.47
+              },
+              {
+                "size_bytes": 1048576,
+                "bandwidth_gbps": 0.58,
+                "latency_ms": 1.8
+              },
+              {
+                "size_bytes": 134217728,
+                "bandwidth_gbps": 1.81,
+                "latency_ms": 74.35
+              }
+            ],
+            "peak_bandwidth_gbps": 1.81
+          }
+        }
+      },
+      "dcgm": {
+        "dcgm_available": true,
+        "diagnostics": {
+          "basic": {
+            "success": true,
+            "parsed_output": {
+              "dcgm_version": "3.3.9",
+              "driver_version": "570.195.03",
+              "gpu_device_ids": "2237,2237,2237,2237",
+              "test_results": {
+                "deployment": {
+                  "Denylist": "Pass",
+                  "NVML Library": "Pass",
+                  "CUDA Main Library": "Pass",
+                  "Permissions and OS Blocks": "Pass",
+                  "Persistence Mode": "Pass",
+                  "Environment Variables": "Pass",
+                  "Page Retirement/Row Remap": "Pass",
+                  "Graphics Processes": "Pass",
+                  "Inforom": "Pass"
+                }
+              },
+              "overall_status": "Pass"
+            },
+            "raw_output": "Successfully ran diagnostic for group.\n+---------------------------+------------------------------------------------+\n| Diagnostic                | Result                                         |\n+===========================+================================================+\n|-----  Metadata  ----------+------------------------------------------------|\n| DCGM Version              | 3.3.9                                          |\n| Driver Version Detected   | 570.195.03                                     |\n| GPU Device IDs Detected   | 2237,2237,2237,2237                            |\n|-----  Deployment  --------+------------------------------------------------|\n| Denylist                  | Pass                                           |\n| NVML Library              | Pass                                           |\n| CUDA Main Library         | Pass                                           |\n| Permissions and OS Blocks | Pass                                           |\n| Persistence Mode          | Pass                                           |\n| Environment Variables     | Pass                                           |\n| Page Retirement/Row Remap | Pass                                           |\n| Graphics Processes        | Pass                                           |\n| Inforom                   | Pass                                           |\n+---------------------------+------------------------------------------------+\n"
+          },
+          "extended": {
+            "success": true,
+            "parsed_output": {
+              "dcgm_version": "3.3.9",
+              "driver_version": "570.195.03",
+              "gpu_device_ids": "2237,2237,2237,2237",
+              "test_results": {
+                "deployment": {
+                  "Denylist": "Pass",
+                  "NVML Library": "Pass",
+                  "CUDA Main Library": "Pass",
+                  "Permissions and OS Blocks": "Pass",
+                  "Persistence Mode": "Pass",
+                  "Environment Variables": "Pass",
+                  "Page Retirement/Row Remap": "Pass",
+                  "Graphics Processes": "Pass",
+                  "Inforom": "Pass"
+                },
+                "integration": {
+                  "PCIe": "Pass - All"
+                },
+                "hardware": {
+                  "GPU Memory": "Pass - All",
+                  "Diagnostic": "Pass - All"
+                },
+                "stress": {
+                  "Targeted Stress": "Pass - All",
+                  "Targeted Power": "Pass - GPUs: 0, 2, 3",
+                  "Warning": "GPU 1 Max power of 224.1 did not reach desire",
+                  "Info": "GPU 3 GPU 3 max power: 225.6 W average power",
+                  "Memory Bandwidth": "Pass - All",
+                  "EUD Test": "Skip - All"
+                }
+              },
+              "overall_status": "Mixed"
+            },
+            "raw_output": "Successfully ran diagnostic for group.\n+---------------------------+------------------------------------------------+\n| Diagnostic                | Result                                         |\n+===========================+================================================+\n|-----  Metadata  ----------+------------------------------------------------|\n| DCGM Version              | 3.3.9                                          |\n| Driver Version Detected   | 570.195.03                                     |\n| GPU Device IDs Detected   | 2237,2237,2237,2237                            |\n|-----  Deployment  --------+------------------------------------------------|\n| Denylist                  | Pass                                           |\n| NVML Library              | Pass                                           |\n| CUDA Main Library         | Pass                                           |\n| Permissions and OS Blocks | Pass                                           |\n| Persistence Mode          | Pass                                           |\n| Environment Variables     | Pass                                           |\n| Page Retirement/Row Remap | Pass                                           |\n| Graphics Processes        | Pass                                           |\n| Inforom                   | Pass                                           |\n+-----  Integration  -------+------------------------------------------------+\n| PCIe                      | Pass - All                                     |\n+-----  Hardware  ----------+------------------------------------------------+\n| GPU Memory                | Pass - All                                     |\n| Diagnostic                | Pass - All                                     |\n+-----  Stress  ------------+------------------------------------------------+\n| Targeted Stress           | Pass - All                                     |\n| Targeted Power            | Pass - GPUs: 0, 2, 3                           |\n|                           | Fail - GPU: 1                                  |\n| Warning                   | GPU 1 Max power of 224.1 did not reach desire  |\n|                           | d power minimum target_power_min_ratio of 224  |\n|                           | .2 for GPU 1 Verify that the clock speeds and  |\n|                           |  GPU utilization are high.                     |\n| Info                      | GPU 0 GPU 0 max power: 299.5 W average power   |\n|                           | usage: 299.0 W                                 |\n| Info                      | GPU 2 GPU 2 max power: 227.0 W average power   |\n|                           | usage: 224.0 W                                 |\n| Info                      | GPU 3 GPU 3 max power: 225.6 W average power   |\n|                           | usage: 223.9 W                                 |\n| Memory Bandwidth          | Pass - All                                     |\n| EUD Test                  | Skip - All                                     |\n+---------------------------+------------------------------------------------+\n",
+            "stdout": "Successfully ran diagnostic for group.\n+---------------------------+------------------------------------------------+\n| Diagnostic                | Result                                         |\n+===========================+================================================+\n|-----  Metadata  ----------+------------------------------------------------|\n| DCGM Version              | 3.3.9                                          |\n| Driver Version Detected   | 570.195.03                                     |\n| GPU Device IDs Detected   | 2237,2237,2237,2237                            |\n|-----  Deployment  --------+------------------------------------------------|\n| Denylist                  | Pass                                           |\n| NVML Library              | Pass                                           |\n| CUDA Main Library         | Pass                                           |\n| Permissions and OS Blocks | Pass                                           |\n| Persistence Mode          | Pass                                           |\n| Environment Variables     | Pass                                           |\n| Page Retirement/Row Remap | Pass                                           |\n| Graphics Processes        | Pass                                           |\n| Inforom                   | Pass                                           |\n+-----  Integration  -------+------------------------------------------------+\n| PCIe                      | Pass - All                                     |\n+-----  Hardware  ----------+------------------------------------------------+\n| GPU Memory                | Pass - All                                     |\n| Diagnostic                | Pass - All                                     |\n+-----  Stress  ------------+------------------------------------------------+\n| Targeted Stress           | Pass - All                                     |\n| Targeted Power            | Pass - GPUs: 0, 2, 3                           |\n|                           | Fail - GPU: 1                                  |\n| Warning                   | GPU 1 Max power of 224.1 did not reach desire  |\n|                           | d power minimum target_power_min_ratio of 224  |\n|                           | .2 for GPU 1 Verify that the clock speeds and  |\n|                           |  GPU utilization are high.                     |\n| Info                      | GPU 0 GPU 0 max power: 299.5 W average power   |\n|                           | usage: 299.0 W                                 |\n| Info                      | GPU 2 GPU 2 max power: 227.0 W average power   |\n|                           | usage: 224.0 W                                 |\n| Info                      | GPU 3 GPU 3 max power: 225.6 W average power   |\n|                           | usage: 223.9 W                                 |\n| Memory Bandwidth          | Pass - All                                     |\n| EUD Test                  | Skip - All                                     |\n+---------------------------+------------------------------------------------+\n",
+            "stderr": "",
+            "exit_code_zero": false
+          }
+        }
+      }
+    },
+    "node_1": {
+      "timestamp": "2025-12-03T17:54:41.475121+00:00",
+      "node_info": {
+        "world_size": 8,
+        "rank": 4,
+        "local_rank": 0,
+        "hostname": "ip-10-2-199-122.ec2.internal",
+        "current_host": "algo-2",
+        "host_rank": 1,
+        "host_count": 2,
+        "gpus_per_host": 4
+      },
+      "summary": {
+        "overall_status": "PASS",
+        "test_results": {
+          "gpu_detection": true,
+          "efa_network": true,
+          "nccl_communication": true,
+          "dcgm_basic": true,
+          "dcgm_extended": true
+        },
+        "cluster_info": {},
+        "performance_summary": {
+          "distributed_all_reduce_bandwidth_gbps": 1.81
+        },
+        "issues": [],
+        "recommendations": [
+          "Cluster is ready for distributed training"
+        ]
+      },
+      "gpu": {
+        "gpu_0": {
+          "name": "NVIDIA A10G",
+          "driver_version": "570.195.03",
+          "memory_total_mb": 23028,
+          "memory_used_mb": 254,
+          "memory_free_mb": 22583,
+          "temperature_c": 20,
+          "utilization_percent": 2,
+          "power_draw_w": 21.9
+        },
+        "gpu_1": {
+          "name": "NVIDIA A10G",
+          "driver_version": "570.195.03",
+          "memory_total_mb": 23028,
+          "memory_used_mb": 254,
+          "memory_free_mb": 22583,
+          "temperature_c": 18,
+          "utilization_percent": 2,
+          "power_draw_w": 22.4
+        },
+        ...
+      },
+      "system": {
+        "memory": {
+          "total_gb": 186.7,
+          "available_gb": 170.82,
+          "used_percent": 8.5
+        },
+        "disk": {
+          "total_gb": 119.94,
+          "free_gb": 78.73,
+          "used_percent": 34.36
+        },
+        "cpu": {
+          "usage_percent": 0.2,
+          "count": 48
+        }
+      },
+      "network": {
+        "aws_ofi_nccl_plugin": {
+          "installed": true,
+          "path": "/opt/amazon/ofi-nccl/lib/x86_64-linux-gnu/libnccl-net.so"
+        },
+        "efa_available": true,
+        "efa_providers": [
+          "provider: efa",
+          "provider: efa",
+          "provider: efa"
+        ],
+        "efa_provider_count": 3,
+        "efa_communication_test": {
+          "success": true,
+          "raw_output": "bytes   #sent   #ack     total       time     MB/sec    usec/xfer   Mxfers/sec\n64      10      =10      1.2k        0.00s      1.17      54.55       0.02\n256     10      =10      5k          0.00s      4.76      53.75       0.02\n1k      10      =10      20k         0.00s     19.00      53.90       0.02\n4k      10      =10      80k         0.00s     70.38      58.20       0.02\n",
+          "test_role": "client",
+          "rank": 4
+        }
+      },
+      "nccl": {
+        "nccl_tests_available": true,
+        "communication_tests": {
+          "distributed_all_reduce": {
+            "success": true,
+            "test_type": "distributed",
+            "processes_tested": 8,
+            "results": [
+              {
+                "size_bytes": 1024,
+                "bandwidth_gbps": 0.0,
+                "latency_ms": 0.45
+              },
+              {
+                "size_bytes": 1048576,
+                "bandwidth_gbps": 0.57,
+                "latency_ms": 1.83
+              },
+              {
+                "size_bytes": 134217728,
+                "bandwidth_gbps": 1.81,
+                "latency_ms": 74.36
+              }
+            ],
+            "peak_bandwidth_gbps": 1.81
+          }
+        }
+      },
+      "dcgm": {
+        "dcgm_available": true,
+        "diagnostics": {
+          "basic": {
+            "success": true,
+            "parsed_output": {
+              "dcgm_version": "3.3.9",
+              "driver_version": "570.195.03",
+              "gpu_device_ids": "2237,2237,2237,2237",
+              "test_results": {
+                "deployment": {
+                  "Denylist": "Pass",
+                  "NVML Library": "Pass",
+                  "CUDA Main Library": "Pass",
+                  "Permissions and OS Blocks": "Pass",
+                  "Persistence Mode": "Pass",
+                  "Environment Variables": "Pass",
+                  "Page Retirement/Row Remap": "Pass",
+                  "Graphics Processes": "Pass",
+                  "Inforom": "Pass"
+                }
+              },
+              "overall_status": "Pass"
+            },
+            "raw_output": "Successfully ran diagnostic for group.\n+---------------------------+------------------------------------------------+\n| Diagnostic                | Result                                         |\n+===========================+================================================+\n|-----  Metadata  ----------+------------------------------------------------|\n| DCGM Version              | 3.3.9                                          |\n| Driver Version Detected   | 570.195.03                                     |\n| GPU Device IDs Detected   | 2237,2237,2237,2237                            |\n|-----  Deployment  --------+------------------------------------------------|\n| Denylist                  | Pass                                           |\n| NVML Library              | Pass                                           |\n| CUDA Main Library         | Pass                                           |\n| Permissions and OS Blocks | Pass                                           |\n| Persistence Mode          | Pass                                           |\n| Environment Variables     | Pass                                           |\n| Page Retirement/Row Remap | Pass                                           |\n| Graphics Processes        | Pass                                           |\n| Inforom                   | Pass                                           |\n+---------------------------+------------------------------------------------+\n"
+          },
+          "extended": {
+            "success": true,
+            "parsed_output": {
+              "dcgm_version": "3.3.9",
+              "driver_version": "570.195.03",
+              "gpu_device_ids": "2237,2237,2237,2237",
+              "test_results": {
+                "deployment": {
+                  "Denylist": "Pass",
+                  "NVML Library": "Pass",
+                  "CUDA Main Library": "Pass",
+                  "Permissions and OS Blocks": "Pass",
+                  "Persistence Mode": "Pass",
+                  "Environment Variables": "Pass",
+                  "Page Retirement/Row Remap": "Pass",
+                  "Graphics Processes": "Pass",
+                  "Inforom": "Pass"
+                },
+                "integration": {
+                  "PCIe": "Pass - All"
+                },
+                "hardware": {
+                  "GPU Memory": "Pass - All",
+                  "Diagnostic": "Pass - All"
+                },
+                "stress": {
+                  "Targeted Stress": "Pass - All",
+                  "Targeted Power": "Pass - All",
+                  "Memory Bandwidth": "Pass - All",
+                  "EUD Test": "Skip - All"
+                }
+              },
+              "overall_status": "Mixed"
+            },
+            "raw_output": "Successfully ran diagnostic for group.\n+---------------------------+------------------------------------------------+\n| Diagnostic                | Result                                         |\n+===========================+================================================+\n|-----  Metadata  ----------+------------------------------------------------|\n| DCGM Version              | 3.3.9                                          |\n| Driver Version Detected   | 570.195.03                                     |\n| GPU Device IDs Detected   | 2237,2237,2237,2237                            |\n|-----  Deployment  --------+------------------------------------------------|\n| Denylist                  | Pass                                           |\n| NVML Library              | Pass                                           |\n| CUDA Main Library         | Pass                                           |\n| Permissions and OS Blocks | Pass                                           |\n| Persistence Mode          | Pass                                           |\n| Environment Variables     | Pass                                           |\n| Page Retirement/Row Remap | Pass                                           |\n| Graphics Processes        | Pass                                           |\n| Inforom                   | Pass                                           |\n+-----  Integration  -------+------------------------------------------------+\n| PCIe                      | Pass - All                                     |\n+-----  Hardware  ----------+------------------------------------------------+\n| GPU Memory                | Pass - All                                     |\n| Diagnostic                | Pass - All                                     |\n+-----  Stress  ------------+------------------------------------------------+\n| Targeted Stress           | Pass - All                                     |\n| Targeted Power            | Pass - All                                     |\n| Memory Bandwidth          | Pass - All                                     |\n| EUD Test                  | Skip - All                                     |\n+---------------------------+------------------------------------------------+\n",
+            "stdout": "Successfully ran diagnostic for group.\n+---------------------------+------------------------------------------------+\n| Diagnostic                | Result                                         |\n+===========================+================================================+\n|-----  Metadata  ----------+------------------------------------------------|\n| DCGM Version              | 3.3.9                                          |\n| Driver Version Detected   | 570.195.03                                     |\n| GPU Device IDs Detected   | 2237,2237,2237,2237                            |\n|-----  Deployment  --------+------------------------------------------------|\n| Denylist                  | Pass                                           |\n| NVML Library              | Pass                                           |\n| CUDA Main Library         | Pass                                           |\n| Permissions and OS Blocks | Pass                                           |\n| Persistence Mode          | Pass                                           |\n| Environment Variables     | Pass                                           |\n| Page Retirement/Row Remap | Pass                                           |\n| Graphics Processes        | Pass                                           |\n| Inforom                   | Pass                                           |\n+-----  Integration  -------+------------------------------------------------+\n| PCIe                      | Pass - All                                     |\n+-----  Hardware  ----------+------------------------------------------------+\n| GPU Memory                | Pass - All                                     |\n| Diagnostic                | Pass - All                                     |\n+-----  Stress  ------------+------------------------------------------------+\n| Targeted Stress           | Pass - All                                     |\n| Targeted Power            | Pass - All                                     |\n| Memory Bandwidth          | Pass - All                                     |\n| EUD Test                  | Skip - All                                     |\n+---------------------------+------------------------------------------------+\n",
+            "stderr": "",
+            "exit_code_zero": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Example MLflow output:
+
+![MLflow dashboard](./images/mlflow_reporting.png)
