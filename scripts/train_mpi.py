@@ -77,6 +77,7 @@ def parse_dcgm_output(output):
     }
     lines = output.split("\n")
     current_section = None
+    last_test_name = None
     for line in lines:
         line = line.strip()
         if "DCGM Version" in line:
@@ -87,12 +88,16 @@ def parse_dcgm_output(output):
             parsed["gpu_device_ids"] = line.split("|")[2].strip()
         elif "-----  Deployment  --------" in line:
             current_section = "deployment"
+            last_test_name = None
         elif "-----  Integration  -------" in line:
             current_section = "integration"
+            last_test_name = None
         elif "-----  Hardware  ----------" in line:
             current_section = "hardware"
+            last_test_name = None
         elif "-----  Stress  ------------" in line:
             current_section = "stress"
+            last_test_name = None
         elif "|" in line and current_section and not line.startswith("+"):
             parts = [p.strip() for p in line.split("|")]
             if len(parts) >= 3 and parts[1] and parts[2]:
@@ -101,6 +106,21 @@ def parse_dcgm_output(output):
                 if current_section not in parsed["test_results"]:
                     parsed["test_results"][current_section] = {}
                 parsed["test_results"][current_section][test_name] = result
+                last_test_name = test_name
+            elif (
+                len(parts) >= 3
+                and not parts[1]
+                and parts[2]
+                and last_test_name
+                and current_section in parsed["test_results"]
+            ):
+                # Continuation row: empty test-name column whose value belongs
+                # to the previous test (e.g. "Fail - GPU: 1" following
+                # "Targeted Power | Pass - GPUs: 0, 2, 3"). Append so the
+                # failure is not silently dropped.
+                parsed["test_results"][current_section][last_test_name] += (
+                    "; " + parts[2]
+                )
     all_results = []
     for section in parsed["test_results"].values():
         all_results.extend(section.values())
@@ -332,8 +352,14 @@ def extract_dcgm_metrics(
                     success, stdout, stderr = run_command("dcgmi diag -r 3")
                     has_output = "Successfully ran diagnostic" in stdout
                     parsed = parse_dcgm_output(stdout) if has_output else None
+                    # A non-zero exit code with output means the diagnostic ran
+                    # but a test failed. Treat as successful only if it ran and
+                    # did not report a Fail (do not trust output alone).
+                    diag_passed = has_output and (
+                        parsed is None or parsed.get("overall_status") != "Fail"
+                    )
                     metrics["diagnostics"]["extended"] = {
-                        "success": success or has_output,
+                        "success": diag_passed,
                         "parsed_output": parsed,
                         "raw_output": stdout if has_output else stderr,
                         "stdout": stdout,
@@ -390,8 +416,14 @@ def extract_dcgm_metrics(
                 success, stdout, stderr = run_command("dcgmi diag -r 3")
                 has_output = "Successfully ran diagnostic" in stdout
                 parsed = parse_dcgm_output(stdout) if has_output else None
+                # A non-zero exit code with output means the diagnostic ran
+                # but a test failed. Treat as successful only if it ran and
+                # did not report a Fail (do not trust output alone).
+                diag_passed = has_output and (
+                    parsed is None or parsed.get("overall_status") != "Fail"
+                )
                 metrics["diagnostics"]["extended"] = {
-                    "success": success or has_output,
+                    "success": diag_passed,
                     "parsed_output": parsed,
                     "raw_output": stdout if has_output else stderr,
                     "stdout": stdout,
@@ -546,7 +578,7 @@ def save_metrics_to_shared_file(
                 "cluster_topology": {
                     "total_nodes": host_count,
                     "gpus_per_node": gpus_per_host,
-                    "processes_per_node": gpus_per_host,
+                    "processes_per_node": processes_per_node,
                 },
             }
             final_metrics = {
@@ -647,6 +679,8 @@ def export_to_mlflow(cluster_metrics, cluster_summary):
         cluster_metrics: Aggregated cluster metrics dictionary (from JSON file)
         cluster_summary: Cluster-wide health check summary
     """
+    import mlflow
+
     logger.info("Exporting metrics to MLflow...")
 
     # Log cluster-level parameters
@@ -710,6 +744,8 @@ def export_to_mlflow(cluster_metrics, cluster_summary):
 
     # Log full metrics as artifact
     mlflow.log_dict(cluster_metrics, "health_check_metrics.json")
+
+    mlflow.end_run()
 
     logger.info("Metrics exported to MLflow successfully")
 
@@ -801,7 +837,6 @@ def run_health_checks(
             cluster_summary = cluster_metrics.get("cluster_summary", summary)
             if setup_mlflow(mlflow_uri, mlflow_experiment_name):
                 export_to_mlflow(cluster_metrics, cluster_summary)
-                mlflow.end_run()
         else:
             logger.warning(
                 f"Metrics file not found: {metrics_file}, skipping MLflow export"

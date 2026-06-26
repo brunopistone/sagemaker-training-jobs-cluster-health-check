@@ -130,7 +130,7 @@ cd container
 
 3. **Run health checks**
 
-- Open `notebook.ipynb`
+- Open `notebook_torchrun.ipynb` (uses `Torchrun`) or `notebook_mpi.ipynb` (uses `MPI`)
 - Update networking configuration (subnet/security group IDs)
 - Execute cells to launch training job
 
@@ -153,7 +153,7 @@ instance_count = 2
 
 # Networking (required)
 networking = Networking(
-    subnet_ids=["subnet-xxxxxxxxx"],
+    subnets=["subnet-xxxxxxxxx"],
     security_group_ids=["sg-xxxxxxxxx"],
 )
 ```

@@ -173,6 +173,7 @@ def parse_dcgm_output(output):
 
     lines = output.split("\n")
     current_section = None
+    last_test_name = None
 
     for line in lines:
         line = line.strip()
@@ -188,12 +189,16 @@ def parse_dcgm_output(output):
         # Track sections
         elif "-----  Deployment  --------" in line:
             current_section = "deployment"
+            last_test_name = None
         elif "-----  Integration  -------" in line:
             current_section = "integration"
+            last_test_name = None
         elif "-----  Hardware  ----------" in line:
             current_section = "hardware"
+            last_test_name = None
         elif "-----  Stress  ------------" in line:
             current_section = "stress"
+            last_test_name = None
 
         # Extract test results
         elif "|" in line and current_section and not line.startswith("+"):
@@ -204,6 +209,21 @@ def parse_dcgm_output(output):
                 if current_section not in parsed["test_results"]:
                     parsed["test_results"][current_section] = {}
                 parsed["test_results"][current_section][test_name] = result
+                last_test_name = test_name
+            elif (
+                len(parts) >= 3
+                and not parts[1]
+                and parts[2]
+                and last_test_name
+                and current_section in parsed["test_results"]
+            ):
+                # Continuation row: the test name column is empty and the value
+                # belongs to the previous test (e.g. a "Fail - GPU: 1" line that
+                # follows "Targeted Power | Pass - GPUs: 0, 2, 3"). Append it so
+                # the failure is not silently dropped.
+                parsed["test_results"][current_section][last_test_name] += (
+                    "; " + parts[2]
+                )
 
     # Determine overall status
     all_results = []
@@ -671,8 +691,14 @@ def extract_dcgm_metrics(
                     # Check if we got valid output even if exit code is non-zero
                     has_output = "Successfully ran diagnostic" in stdout
                     parsed = parse_dcgm_output(stdout) if has_output else None
+                    # A non-zero exit code with output means the diagnostic ran
+                    # but a test failed. Treat as successful only if it ran and
+                    # did not report a Fail (do not trust output alone).
+                    diag_passed = has_output and (
+                        parsed is None or parsed.get("overall_status") != "Fail"
+                    )
                     metrics["diagnostics"]["extended"] = {
-                        "success": success or has_output,
+                        "success": diag_passed,
                         "parsed_output": parsed,
                         "raw_output": stdout if has_output else stderr,
                         "stdout": stdout,
@@ -741,8 +767,14 @@ def extract_dcgm_metrics(
                 # Check if we got valid output even if exit code is non-zero
                 has_output = "Successfully ran diagnostic" in stdout
                 parsed = parse_dcgm_output(stdout) if has_output else None
+                # A non-zero exit code with output means the diagnostic ran
+                # but a test failed. Treat as successful only if it ran and
+                # did not report a Fail (do not trust output alone).
+                diag_passed = has_output and (
+                    parsed is None or parsed.get("overall_status") != "Fail"
+                )
                 metrics["diagnostics"]["extended"] = {
-                    "success": success or has_output,
+                    "success": diag_passed,
                     "parsed_output": parsed,
                     "raw_output": stdout if has_output else stderr,
                     "stdout": stdout,
@@ -878,8 +910,11 @@ def generate_summary_and_recommendations(
     # Test results
     summary["test_results"]["gpu_detection"] = len(gpu_metrics) > 0
     summary["test_results"]["efa_network"] = network_metrics.get("efa_available", False)
-    summary["test_results"]["nccl_communication"] = nccl_metrics.get(
-        "nccl_tests_available", False
+    # Derive NCCL status from the actual test results, not from the
+    # "nccl_tests_available" flag (which only signals that testing was attempted).
+    communication_tests = nccl_metrics.get("communication_tests", {})
+    summary["test_results"]["nccl_communication"] = bool(communication_tests) and all(
+        test.get("success", False) for test in communication_tests.values()
     )
 
     # Handle aggregated DCGM metrics
@@ -1253,6 +1288,8 @@ def export_to_mlflow(cluster_metrics, cluster_summary):
         cluster_metrics: Aggregated cluster metrics dictionary (from JSON file)
         cluster_summary: Cluster-wide health check summary
     """
+    import mlflow
+
     logger.info("Exporting metrics to MLflow...")
 
     # Log cluster-level parameters
@@ -1316,6 +1353,8 @@ def export_to_mlflow(cluster_metrics, cluster_summary):
 
     # Log full metrics as artifact
     mlflow.log_dict(cluster_metrics, "health_check_metrics.json")
+
+    mlflow.end_run()
 
     logger.info("Metrics exported to MLflow successfully")
 
@@ -1469,7 +1508,6 @@ def run_health_checks(
             cluster_summary = cluster_metrics.get("cluster_summary", summary)
             if setup_mlflow(mlflow_uri, mlflow_experiment_name):
                 export_to_mlflow(cluster_metrics, cluster_summary)
-                mlflow.end_run()
         else:
             logger.warning(
                 f"Metrics file not found: {metrics_file}, skipping MLflow export"
