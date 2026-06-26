@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import psutil
+import shlex
 import socket
 import subprocess
 import sys
@@ -60,8 +61,23 @@ def get_ip_from_host(host):
 
 
 def run_command(cmd):
+    """Execute a command and capture output.
+
+    Runs with ``shell=False`` to avoid shell injection and quoting issues, so
+    the command must be passed as an argv list (e.g. ``["dcgmi", "diag", "-r",
+    "1"]``). A string is accepted for convenience and split with ``shlex``, but
+    callers should prefer the list form.
+
+    Args:
+        cmd: Command to execute as a list of arguments (argv), or a string.
+
+    Returns:
+        tuple: (success: bool, stdout: str, stderr: str)
+    """
     try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if isinstance(cmd, str):
+            cmd = shlex.split(cmd)
+        result = subprocess.run(cmd, capture_output=True, text=True)
         return result.returncode == 0, result.stdout, result.stderr
     except Exception as e:
         return False, "", str(e)
@@ -137,12 +153,16 @@ def parse_dcgm_output(output):
 def extract_gpu_metrics():
     logger.info("Extracting GPU metrics...")
     metrics = {}
-    success, stdout, stderr = run_command("which nvidia-smi")
+    success, stdout, stderr = run_command(["which", "nvidia-smi"])
     if not success:
         logger.info("No NVIDIA GPUs detected (nvidia-smi not available)")
         return metrics
     success, stdout, stderr = run_command(
-        "nvidia-smi --query-gpu=name,driver_version,memory.total,memory.used,memory.free --format=csv,noheader,nounits"
+        [
+            "nvidia-smi",
+            "--query-gpu=name,driver_version,memory.total,memory.used,memory.free",
+            "--format=csv,noheader,nounits",
+        ]
     )
     if success:
         lines = stdout.strip().split("\n")
@@ -161,7 +181,11 @@ def extract_gpu_metrics():
     else:
         logger.error(f"Failed to get GPU info: {stderr}")
     success, stdout, stderr = run_command(
-        "nvidia-smi --query-gpu=temperature.gpu,utilization.gpu,power.draw --format=csv,noheader,nounits"
+        [
+            "nvidia-smi",
+            "--query-gpu=temperature.gpu,utilization.gpu,power.draw",
+            "--format=csv,noheader,nounits",
+        ]
     )
     if success:
         lines = stdout.strip().split("\n")
@@ -213,7 +237,7 @@ def extract_network_metrics(world_size, rank, current_host_rank, gpus_per_host):
 
     # Check for AWS OFI NCCL plugin
     success, stdout, stderr = run_command(
-        "find /opt/amazon -name 'libnccl-net.so' 2>/dev/null"
+        ["find", "/opt/amazon", "-name", "libnccl-net.so"]
     )
     if success and stdout.strip():
         metrics["aws_ofi_nccl_plugin"] = {
@@ -225,7 +249,7 @@ def extract_network_metrics(world_size, rank, current_host_rank, gpus_per_host):
         metrics["aws_ofi_nccl_plugin"] = {"installed": False}
         logger.warning("AWS OFI NCCL plugin not found - NCCL may not use EFA")
 
-    success, stdout, stderr = run_command("fi_info")
+    success, stdout, stderr = run_command(["fi_info"])
     if success:
         metrics["efa_available"] = True
         efa_providers = []
@@ -248,7 +272,7 @@ def extract_network_metrics(world_size, rank, current_host_rank, gpus_per_host):
                 if current_host_rank == 0:
                     logger.info("Starting EFA server...")
                     success, stdout, stderr = run_command(
-                        "timeout 60 /opt/amazon/efa/bin/fi_pingpong -p efa"
+                        ["timeout", "60", "/opt/amazon/efa/bin/fi_pingpong", "-p", "efa"]
                     )
                     role = "server"
                 else:
@@ -257,7 +281,14 @@ def extract_network_metrics(world_size, rank, current_host_rank, gpus_per_host):
                     master_ip = get_ip_from_host(master_hostname)
                     logger.info(f"Connecting EFA client to {master_ip}...")
                     success, stdout, stderr = run_command(
-                        f"timeout 45 /opt/amazon/efa/bin/fi_pingpong -p efa {master_ip}"
+                        [
+                            "timeout",
+                            "45",
+                            "/opt/amazon/efa/bin/fi_pingpong",
+                            "-p",
+                            "efa",
+                            master_ip,
+                        ]
                     )
                     role = "client"
                 metrics["efa_communication_test"] = {
@@ -324,13 +355,13 @@ def extract_dcgm_metrics(
                 "rank": rank,
             }
         else:
-            success, stdout, stderr = run_command("which dcgmi")
+            success, stdout, stderr = run_command(["which", "dcgmi"])
             if success:
                 metrics["dcgm_available"] = True
                 logger.info("DCGM found, running diagnostics...")
                 if enable_level1:
                     logger.info("Running DCGM Level 1 diagnostics...")
-                    success, stdout, stderr = run_command("dcgmi diag -r 1")
+                    success, stdout, stderr = run_command(["dcgmi", "diag", "-r", "1"])
                     metrics["diagnostics"]["basic"] = {
                         "success": success,
                         "parsed_output": parse_dcgm_output(stdout) if success else None,
@@ -349,7 +380,7 @@ def extract_dcgm_metrics(
                     }
                 if enable_level3:
                     logger.info("Running DCGM Level 3 diagnostics...")
-                    success, stdout, stderr = run_command("dcgmi diag -r 3")
+                    success, stdout, stderr = run_command(["dcgmi", "diag", "-r", "3"])
                     has_output = "Successfully ran diagnostic" in stdout
                     parsed = parse_dcgm_output(stdout) if has_output else None
                     # A non-zero exit code with output means the diagnostic ran
@@ -388,13 +419,13 @@ def extract_dcgm_metrics(
             else:
                 logger.warning("DCGM not available")
     else:
-        success, stdout, stderr = run_command("which dcgmi")
+        success, stdout, stderr = run_command(["which", "dcgmi"])
         if success:
             metrics["dcgm_available"] = True
             logger.info("DCGM found, running diagnostics...")
             if enable_level1:
                 logger.info("Running DCGM Level 1 diagnostics...")
-                success, stdout, stderr = run_command("dcgmi diag -r 1")
+                success, stdout, stderr = run_command(["dcgmi", "diag", "-r", "1"])
                 metrics["diagnostics"]["basic"] = {
                     "success": success,
                     "parsed_output": parse_dcgm_output(stdout) if success else None,
@@ -413,7 +444,7 @@ def extract_dcgm_metrics(
                 }
             if enable_level3:
                 logger.info("Running DCGM Level 3 diagnostics...")
-                success, stdout, stderr = run_command("dcgmi diag -r 3")
+                success, stdout, stderr = run_command(["dcgmi", "diag", "-r", "3"])
                 has_output = "Successfully ran diagnostic" in stdout
                 parsed = parse_dcgm_output(stdout) if has_output else None
                 # A non-zero exit code with output means the diagnostic ran
@@ -468,25 +499,14 @@ def generate_summary_and_recommendations(
     }
     summary["test_results"]["gpu_detection"] = len(gpu_metrics) > 0
     summary["test_results"]["efa_network"] = network_metrics.get("efa_available", False)
-    if dcgm_metrics.get("aggregated"):
-        dcgm_basic_success = False
-        dcgm_extended_success = False
-        for node_metrics in dcgm_metrics.get("nodes", {}).values():
-            if node_metrics.get("diagnostics", {}).get("basic", {}).get("success"):
-                dcgm_basic_success = True
-            if node_metrics.get("diagnostics", {}).get("extended", {}).get("success"):
-                dcgm_extended_success = True
-        summary["test_results"]["dcgm_basic"] = dcgm_basic_success
-        summary["test_results"]["dcgm_extended"] = dcgm_extended_success
-    else:
-        summary["test_results"]["dcgm_basic"] = (
-            dcgm_metrics.get("diagnostics", {}).get("basic", {}).get("success", False)
-        )
-        summary["test_results"]["dcgm_extended"] = (
-            dcgm_metrics.get("diagnostics", {})
-            .get("extended", {})
-            .get("success", False)
-        )
+    # DCGM results for this node. Cross-node aggregation happens later in
+    # build_cluster_summary; here the summary reflects only this node.
+    summary["test_results"]["dcgm_basic"] = (
+        dcgm_metrics.get("diagnostics", {}).get("basic", {}).get("success", False)
+    )
+    summary["test_results"]["dcgm_extended"] = (
+        dcgm_metrics.get("diagnostics", {}).get("extended", {}).get("success", False)
+    )
     if len(gpu_metrics) == 0:
         logger.info("No GPUs detected - CPU-only instance")
         summary["recommendations"].append(
@@ -511,7 +531,7 @@ def generate_summary_and_recommendations(
             .get("delegated", {})
             .get("success", False)
         )
-        if not dcgm_delegated and not dcgm_metrics.get("aggregated"):
+        if not dcgm_delegated:
             if not summary["test_results"]["dcgm_basic"]:
                 summary["issues"].append("DCGM basic diagnostics failed")
                 summary["recommendations"].append(
@@ -529,6 +549,67 @@ def generate_summary_and_recommendations(
     if not summary["issues"]:
         summary["recommendations"].append("Cluster is ready for distributed training")
     return summary
+
+
+def build_cluster_summary(all_node_metrics):
+    """Aggregate every node's summary into a true cluster-wide summary.
+
+    The per-node summary only reflects the checks run on that node (DCGM and the
+    EFA pingpong run on a single rank per node, GPU metrics are node-local), so
+    the cluster status must fold together all nodes rather than trusting any
+    single node. A failure isolated to one node must fail the cluster.
+
+    Args:
+        all_node_metrics: Mapping of node id -> node metrics, each containing a
+            "summary" produced by generate_summary_and_recommendations.
+
+    Returns:
+        dict: Cluster summary with worst-case overall_status, AND-ed test
+        results, and the union of issues/recommendations across nodes.
+    """
+    # Rank order: FAIL is worse than WARN is worse than PASS.
+    status_rank = {"PASS": 0, "WARN": 1, "FAIL": 2}
+    rank_status = {v: k for k, v in status_rank.items()}
+
+    cluster = {
+        "overall_status": "PASS",
+        "test_results": {},
+        "issues": [],
+        "recommendations": [],
+    }
+
+    worst_rank = 0
+    seen_recommendations = set()
+
+    for node_id, node_data in all_node_metrics.items():
+        node_summary = node_data.get("summary", {})
+
+        # Worst-case overall status across all nodes.
+        node_status = node_summary.get("overall_status", "PASS")
+        worst_rank = max(worst_rank, status_rank.get(node_status, 0))
+
+        # AND the per-test results: a test passes for the cluster only if it
+        # passed on every node that reported it.
+        for test_name, passed in node_summary.get("test_results", {}).items():
+            if test_name in cluster["test_results"]:
+                cluster["test_results"][test_name] = (
+                    cluster["test_results"][test_name] and bool(passed)
+                )
+            else:
+                cluster["test_results"][test_name] = bool(passed)
+
+        # Union of issues, tagged with the node they came from.
+        for issue in node_summary.get("issues", []):
+            cluster["issues"].append(f"[{node_id}] {issue}")
+
+        # Union of recommendations, de-duplicated across nodes.
+        for rec in node_summary.get("recommendations", []):
+            if rec not in seen_recommendations:
+                seen_recommendations.add(rec)
+                cluster["recommendations"].append(rec)
+
+    cluster["overall_status"] = rank_status[worst_rank]
+    return cluster
 
 
 def save_metrics_to_shared_file(
@@ -581,10 +662,14 @@ def save_metrics_to_shared_file(
                     "processes_per_node": processes_per_node,
                 },
             }
+            # Aggregate a true cluster summary from every node's summary rather
+            # than reporting only rank 0's local view.
+            cluster_summary = build_cluster_summary(all_node_metrics)
+
             final_metrics = {
                 "timestamp": all_metrics["timestamp"],
                 "cluster_info": cluster_context,
-                "cluster_summary": summary,
+                "cluster_summary": cluster_summary,
                 "nodes": all_node_metrics,
             }
             os.makedirs(metrics_dir, exist_ok=True)
@@ -628,7 +713,7 @@ def log_health_check_summary(
     logger.info(f"CPU usage: {system_metrics['cpu']['usage_percent']:.1f}%")
     logger.info(f"EFA available: {network_metrics['efa_available']}")
     logger.info(
-        f"DCGM available: {dcgm_metrics.get('dcgm_available', dcgm_metrics.get('aggregated', False))}"
+        f"DCGM available: {dcgm_metrics.get('dcgm_available', False)}"
     )
     if summary["issues"]:
         logger.warning("Issues found:")

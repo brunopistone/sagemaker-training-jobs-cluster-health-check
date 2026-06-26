@@ -165,3 +165,6 @@ data/**/
 data/**/*
 *.db
 */**/.db
+.claude
+*/.claude
+*/**/.claude

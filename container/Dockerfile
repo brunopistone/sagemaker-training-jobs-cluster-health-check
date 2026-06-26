@@ -33,6 +33,6 @@ RUN git clone https://github.com/NVIDIA/nccl-tests.git /opt/nccl-tests && \
 ENV NCCL_DEBUG=VERSION
 
 RUN pip install \
-    mlflow \
-    "psutil>=5.9.0" \
+    mlflow==3.14.0 \
+    "psutil==7.2.2" \
     "sagemaker-mlflow==0.1.0"

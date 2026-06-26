@@ -47,7 +47,9 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 
 # Install PyTorch 2.8.0 with CUDA 12.9
-RUN pip3 install torch==2.8.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129
+# torchvision/torchaudio are not imported by the health-check scripts, so they
+# are intentionally omitted to keep the image small and avoid version drift.
+RUN pip3 install torch==2.8.0 --index-url https://download.pytorch.org/whl/cu129
 
 # Install libnl packages required by EFA
 RUN apt-get update && apt-get install -y \
@@ -128,10 +130,10 @@ ENV NCCL_DEBUG=VERSION \
     NCCL_SOCKET_IFNAME=^docker,lo
 
 # Install SageMaker training toolkit and dependencies
-RUN pip3 install --ignore-installed blinker && \
+RUN pip3 install --ignore-installed "blinker==1.9.0" && \
     pip3 install \
-    mlflow \
-    "psutil>=5.9.0" \
+    mlflow==3.14.0 \
+    "psutil==7.2.2" \
     "sagemaker-mlflow==0.1.0" \
-    sagemaker-pytorch-training \
-    mpi4py
+    "sagemaker-pytorch-training==3.0.0" \
+    "mpi4py==4.1.2"

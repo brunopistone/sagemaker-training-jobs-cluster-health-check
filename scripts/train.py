@@ -6,7 +6,7 @@ import logging
 import os
 import pickle
 import psutil
-import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -75,83 +75,26 @@ def get_ip_from_host(host):
 
 
 def run_command(cmd):
-    """Execute shell command and capture output.
+    """Execute a command and capture output.
+
+    Runs with ``shell=False`` to avoid shell injection and quoting issues, so
+    the command must be passed as an argv list (e.g. ``["dcgmi", "diag", "-r",
+    "1"]``). A string is accepted for convenience and split with ``shlex``, but
+    callers should prefer the list form.
 
     Args:
-        cmd: Shell command to execute
+        cmd: Command to execute as a list of arguments (argv), or a string.
 
     Returns:
         tuple: (success: bool, stdout: str, stderr: str)
     """
     try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if isinstance(cmd, str):
+            cmd = shlex.split(cmd)
+        result = subprocess.run(cmd, capture_output=True, text=True)
         return result.returncode == 0, result.stdout, result.stderr
     except Exception as e:
         return False, "", str(e)
-
-
-def parse_nccl_output(output):
-    """Parse NCCL test output to extract performance metrics.
-
-    Args:
-        output: Raw NCCL test output string
-
-    Returns:
-        dict: Parsed metrics including version, devices, bandwidth, and test summary
-    """
-    parsed = {
-        "nccl_version": None,
-        "devices": [],
-        "avg_bandwidth_gbps": None,
-        "peak_bandwidth_gbps": None,
-        "test_summary": [],
-    }
-
-    lines = output.split("\n")
-    for line in lines:
-        # Extract NCCL version
-        if "NCCL version" in line:
-            parsed["nccl_version"] = line.strip()
-
-        # Extract device info
-        if "Rank" in line and "device" in line and "NVIDIA" in line:
-            parsed["devices"].append(line.strip())
-
-        # Extract average bandwidth using regex
-        avg_match = re.search(r"Avg bus bandwidth\s*:\s*(\d+(?:\.\d+)?)", line)
-        if avg_match:
-            parsed["avg_bandwidth_gbps"] = float(avg_match.group(1))
-
-        # Extract performance data using regex - match actual NCCL format
-        perf_match = re.match(
-            r"\s*(\d+)\s+\d+\s+\w+\s+\w+\s+[-\d]+\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+\d+\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+\d+",
-            line,
-        )
-        if perf_match:
-            try:
-                size = perf_match.group(1)
-                algbw = float(perf_match.group(2))  # out-of-place algbw
-                busbw_out = float(perf_match.group(3))  # out-of-place busbw
-                busbw_in = float(perf_match.group(6))  # in-place busbw (usually higher)
-
-                # Use the higher bandwidth value
-                busbw = max(busbw_out, busbw_in)
-
-                parsed["test_summary"].append(
-                    {"size": size, "algbw_gbps": algbw, "busbw_gbps": busbw}
-                )
-                if (
-                    parsed["peak_bandwidth_gbps"] is None
-                    or busbw > parsed["peak_bandwidth_gbps"]
-                ):
-                    parsed["peak_bandwidth_gbps"] = busbw
-            except (ValueError, IndexError):
-                pass
-
-    # Keep only last 5 test results for readability
-    parsed["test_summary"] = parsed["test_summary"][-5:]
-
-    return parsed
 
 
 def parse_dcgm_output(output):
@@ -256,14 +199,18 @@ def extract_gpu_metrics():
     metrics = {}
 
     # Check if nvidia-smi is available (some instances don't have GPUs)
-    success, stdout, stderr = run_command("which nvidia-smi")
+    success, stdout, stderr = run_command(["which", "nvidia-smi"])
     if not success:
         logger.info("No NVIDIA GPUs detected (nvidia-smi not available)")
         return metrics
 
     # GPU basic info
     success, stdout, stderr = run_command(
-        "nvidia-smi --query-gpu=name,driver_version,memory.total,memory.used,memory.free --format=csv,noheader,nounits"
+        [
+            "nvidia-smi",
+            "--query-gpu=name,driver_version,memory.total,memory.used,memory.free",
+            "--format=csv,noheader,nounits",
+        ]
     )
     if success:
         lines = stdout.strip().split("\n")
@@ -284,7 +231,11 @@ def extract_gpu_metrics():
 
     # GPU temperature and utilization
     success, stdout, stderr = run_command(
-        "nvidia-smi --query-gpu=temperature.gpu,utilization.gpu,power.draw --format=csv,noheader,nounits"
+        [
+            "nvidia-smi",
+            "--query-gpu=temperature.gpu,utilization.gpu,power.draw",
+            "--format=csv,noheader,nounits",
+        ]
     )
     if success:
         lines = stdout.strip().split("\n")
@@ -355,7 +306,7 @@ def extract_network_metrics(world_size, rank, current_host_rank, gpus_per_host):
 
     # Check for AWS OFI NCCL plugin
     success, stdout, stderr = run_command(
-        "find /opt/amazon -name 'libnccl-net.so' 2>/dev/null"
+        ["find", "/opt/amazon", "-name", "libnccl-net.so"]
     )
     if success and stdout.strip():
         metrics["aws_ofi_nccl_plugin"] = {
@@ -368,7 +319,7 @@ def extract_network_metrics(world_size, rank, current_host_rank, gpus_per_host):
         logger.warning("AWS OFI NCCL plugin not found - NCCL may not use EFA")
 
     # EFA providers
-    success, stdout, stderr = run_command("fi_info")
+    success, stdout, stderr = run_command(["fi_info"])
     if success:
         metrics["efa_available"] = True
         # Extract key EFA info instead of full output
@@ -400,7 +351,7 @@ def extract_network_metrics(world_size, rank, current_host_rank, gpus_per_host):
                     # First node: run server
                     logger.info("Starting EFA server...")
                     success, stdout, stderr = run_command(
-                        "timeout 60 /opt/amazon/efa/bin/fi_pingpong -p efa"
+                        ["timeout", "60", "/opt/amazon/efa/bin/fi_pingpong", "-p", "efa"]
                     )
                     role = "server"
                 else:
@@ -410,7 +361,14 @@ def extract_network_metrics(world_size, rank, current_host_rank, gpus_per_host):
                     master_ip = get_ip_from_host(master_hostname)
                     logger.info(f"Connecting EFA client to {master_ip}...")
                     success, stdout, stderr = run_command(
-                        f"timeout 45 /opt/amazon/efa/bin/fi_pingpong -p efa {master_ip}"
+                        [
+                            "timeout",
+                            "45",
+                            "/opt/amazon/efa/bin/fi_pingpong",
+                            "-p",
+                            "efa",
+                            master_ip,
+                        ]
                     )
                     role = "client"
 
@@ -653,7 +611,7 @@ def extract_dcgm_metrics(
         else:
             # This rank runs DCGM
             # Check if DCGM is available
-            success, stdout, stderr = run_command("which dcgmi")
+            success, stdout, stderr = run_command(["which", "dcgmi"])
             if success:
                 metrics["dcgm_available"] = True
                 logger.info("DCGM found, running diagnostics...")
@@ -663,7 +621,7 @@ def extract_dcgm_metrics(
                     logger.info(
                         "Running DCGM Level 1 diagnostics (no timeout - may take several minutes)..."
                     )
-                    success, stdout, stderr = run_command("dcgmi diag -r 1")
+                    success, stdout, stderr = run_command(["dcgmi", "diag", "-r", "1"])
                     metrics["diagnostics"]["basic"] = {
                         "success": success,
                         "parsed_output": parse_dcgm_output(stdout) if success else None,
@@ -686,7 +644,7 @@ def extract_dcgm_metrics(
                     logger.info(
                         "Running DCGM Level 3 diagnostics (no timeout - may take several minutes)..."
                     )
-                    success, stdout, stderr = run_command("dcgmi diag -r 3")
+                    success, stdout, stderr = run_command(["dcgmi", "diag", "-r", "3"])
                     # DCGM returns non-zero exit code if any test fails, but still provides output
                     # Check if we got valid output even if exit code is non-zero
                     has_output = "Successfully ran diagnostic" in stdout
@@ -729,7 +687,7 @@ def extract_dcgm_metrics(
                 logger.warning("DCGM not available")
     else:
         # Single process - run DCGM directly
-        success, stdout, stderr = run_command("which dcgmi")
+        success, stdout, stderr = run_command(["which", "dcgmi"])
         if success:
             metrics["dcgm_available"] = True
             logger.info("DCGM found, running diagnostics...")
@@ -739,7 +697,7 @@ def extract_dcgm_metrics(
                 logger.info(
                     "Running DCGM Level 1 diagnostics (no timeout - may take several minutes)..."
                 )
-                success, stdout, stderr = run_command("dcgmi diag -r 1")
+                success, stdout, stderr = run_command(["dcgmi", "diag", "-r", "1"])
                 metrics["diagnostics"]["basic"] = {
                     "success": success,
                     "parsed_output": parse_dcgm_output(stdout) if success else None,
@@ -762,7 +720,7 @@ def extract_dcgm_metrics(
                 logger.info(
                     "Running DCGM Level 3 diagnostics (no timeout - may take several minutes)..."
                 )
-                success, stdout, stderr = run_command("dcgmi diag -r 3")
+                success, stdout, stderr = run_command(["dcgmi", "diag", "-r", "3"])
                 # DCGM returns non-zero exit code if any test fails, but still provides output
                 # Check if we got valid output even if exit code is non-zero
                 has_output = "Successfully ran diagnostic" in stdout
@@ -812,72 +770,6 @@ def extract_dcgm_metrics(
     return metrics
 
 
-def extract_efa_performance(network_metrics):
-    """Extract key EFA performance metrics from network test results.
-
-    Args:
-        network_metrics: Network metrics dictionary from extract_network_metrics
-
-    Returns:
-        dict: EFA performance metrics including bandwidth and message size
-    """
-    perf = {"available": network_metrics.get("efa_available", False)}
-
-    if network_metrics.get("efa_communication_test", {}).get("success"):
-        efa_output = network_metrics["efa_communication_test"].get("raw_output", "")
-        if "MB/sec" in efa_output:
-            lines = efa_output.split("\n")
-            for line in lines:
-                if "MB/sec" in line and not line.startswith("#"):
-                    parts = line.split()
-                    # Find the numeric value before 'MB/sec'
-                    for i, part in enumerate(parts):
-                        if part == "MB/sec" and i > 0:
-                            try:
-                                perf["bandwidth_mbps"] = float(parts[i - 1])
-                                perf["message_size"] = parts[0]
-                                return perf
-                            except (ValueError, IndexError):
-                                continue
-    return perf
-
-
-def extract_nccl_performance(nccl_metrics):
-    """Extract key NCCL performance metrics from test results.
-
-    Args:
-        nccl_metrics: NCCL metrics dictionary from extract_nccl_metrics
-
-    Returns:
-        dict: NCCL performance metrics including peak bandwidth and test results
-    """
-    perf = {"available": nccl_metrics.get("nccl_tests_available", False)}
-
-    if nccl_metrics.get("communication_tests"):
-        for test_name, test_data in nccl_metrics["communication_tests"].items():
-            if test_data.get("success"):
-                # Handle new torch-based results format
-                if test_data.get("results"):
-                    perf[test_name] = {
-                        "peak_bandwidth_gbps": test_data.get("peak_bandwidth_gbps"),
-                        "results": test_data["results"],
-                    }
-                # Handle old parsed_output format (if still present)
-                elif test_data.get("parsed_output"):
-                    parsed = test_data["parsed_output"]
-                    perf[test_name] = {
-                        "peak_bandwidth_gbps": parsed.get("peak_bandwidth_gbps"),
-                        "avg_bandwidth_gbps": parsed.get("avg_bandwidth_gbps"),
-                    }
-                    if parsed.get("test_summary") and len(parsed["test_summary"]) > 0:
-                        largest = parsed["test_summary"][-1]
-                        perf[test_name]["largest_message"] = {
-                            "size": largest["size"],
-                            "bandwidth_gbps": largest["busbw_gbps"],
-                        }
-    return perf
-
-
 # ============================================================================
 # BUSINESS LOGIC
 # ============================================================================
@@ -917,28 +809,14 @@ def generate_summary_and_recommendations(
         test.get("success", False) for test in communication_tests.values()
     )
 
-    # Handle aggregated DCGM metrics
-    if dcgm_metrics.get("aggregated"):
-        # Check if any node has DCGM results
-        dcgm_basic_success = False
-        dcgm_extended_success = False
-        for node_metrics in dcgm_metrics.get("nodes", {}).values():
-            if node_metrics.get("diagnostics", {}).get("basic", {}).get("success"):
-                dcgm_basic_success = True
-            if node_metrics.get("diagnostics", {}).get("extended", {}).get("success"):
-                dcgm_extended_success = True
-        summary["test_results"]["dcgm_basic"] = dcgm_basic_success
-        summary["test_results"]["dcgm_extended"] = dcgm_extended_success
-    else:
-        # Single node or non-aggregated
-        summary["test_results"]["dcgm_basic"] = (
-            dcgm_metrics.get("diagnostics", {}).get("basic", {}).get("success", False)
-        )
-        summary["test_results"]["dcgm_extended"] = (
-            dcgm_metrics.get("diagnostics", {})
-            .get("extended", {})
-            .get("success", False)
-        )
+    # DCGM results for this node. Cross-node aggregation happens later in
+    # build_cluster_summary; here the summary reflects only this node.
+    summary["test_results"]["dcgm_basic"] = (
+        dcgm_metrics.get("diagnostics", {}).get("basic", {}).get("success", False)
+    )
+    summary["test_results"]["dcgm_extended"] = (
+        dcgm_metrics.get("diagnostics", {}).get("extended", {}).get("success", False)
+    )
 
     # Cluster info
     if "cluster_info" in nccl_metrics:
@@ -991,8 +869,8 @@ def generate_summary_and_recommendations(
             .get("success", False)
         )
 
-        if dcgm_delegated or dcgm_metrics.get("aggregated"):
-            # DCGM was delegated or aggregated - check aggregated results
+        if dcgm_delegated:
+            # DCGM was handled by the first rank on this node - nothing to flag.
             pass
         else:
             # This rank should have run DCGM - check results
@@ -1027,6 +905,80 @@ def generate_summary_and_recommendations(
         summary["recommendations"].append("Cluster is ready for distributed training")
 
     return summary
+
+
+def build_cluster_summary(all_node_metrics):
+    """Aggregate every node's summary into a true cluster-wide summary.
+
+    The per-node summary only reflects the checks run on that node (DCGM and the
+    EFA pingpong run on a single rank per node, GPU/system metrics are
+    node-local), so the cluster status must fold together all nodes rather than
+    trusting any single node. A failure isolated to one node must fail the
+    cluster.
+
+    Args:
+        all_node_metrics: Mapping of node id -> node metrics, each containing a
+            "summary" produced by generate_summary_and_recommendations.
+
+    Returns:
+        dict: Cluster summary with worst-case overall_status, AND-ed test
+        results, and the union of issues/recommendations across nodes.
+    """
+    # Rank order: FAIL is worse than WARN is worse than PASS.
+    status_rank = {"PASS": 0, "WARN": 1, "FAIL": 2}
+    rank_status = {v: k for k, v in status_rank.items()}
+
+    cluster = {
+        "overall_status": "PASS",
+        "test_results": {},
+        "cluster_info": {},
+        "performance_summary": {},
+        "issues": [],
+        "recommendations": [],
+    }
+
+    worst_rank = 0
+    seen_recommendations = set()
+
+    for node_id, node_data in all_node_metrics.items():
+        node_summary = node_data.get("summary", {})
+
+        # Worst-case overall status across all nodes.
+        node_status = node_summary.get("overall_status", "PASS")
+        worst_rank = max(worst_rank, status_rank.get(node_status, 0))
+
+        # AND the per-test results: a test passes for the cluster only if it
+        # passed on every node that reported it.
+        for test_name, passed in node_summary.get("test_results", {}).items():
+            if test_name in cluster["test_results"]:
+                cluster["test_results"][test_name] = (
+                    cluster["test_results"][test_name] and bool(passed)
+                )
+            else:
+                cluster["test_results"][test_name] = bool(passed)
+
+        # Union of issues, tagged with the node they came from.
+        for issue in node_summary.get("issues", []):
+            cluster["issues"].append(f"[{node_id}] {issue}")
+
+        # Union of recommendations, de-duplicated across nodes.
+        for rec in node_summary.get("recommendations", []):
+            if rec not in seen_recommendations:
+                seen_recommendations.add(rec)
+                cluster["recommendations"].append(rec)
+
+        # Performance summary: keep the worst (lowest) bandwidth seen per metric
+        # across nodes, so a slow node is not hidden by a fast one.
+        for metric_name, value in node_summary.get("performance_summary", {}).items():
+            if metric_name not in cluster["performance_summary"]:
+                cluster["performance_summary"][metric_name] = value
+            else:
+                cluster["performance_summary"][metric_name] = min(
+                    cluster["performance_summary"][metric_name], value
+                )
+
+    cluster["overall_status"] = rank_status[worst_rank]
+    return cluster
 
 
 def save_metrics_to_shared_file(
@@ -1131,10 +1083,14 @@ def save_metrics_to_shared_file(
                 },
             }
 
+            # Aggregate a true cluster summary from every node's summary rather
+            # than reporting only rank 0's local view.
+            cluster_summary = build_cluster_summary(all_node_metrics)
+
             final_metrics = {
                 "timestamp": all_metrics["timestamp"],
                 "cluster_info": cluster_context,
-                "cluster_summary": summary,
+                "cluster_summary": cluster_summary,
                 "nodes": all_node_metrics,
             }
 
@@ -1234,9 +1190,7 @@ def log_health_check_summary(
                     f"NCCL {test_name} peak bandwidth: {test_data['peak_bandwidth_gbps']:.2f} GB/s"
                 )
 
-    logger.info(
-        f"DCGM available: {dcgm_metrics.get('dcgm_available', dcgm_metrics.get('aggregated', False))}"
-    )
+    logger.info(f"DCGM available: {dcgm_metrics.get('dcgm_available', False)}")
 
     if summary["issues"]:
         logger.warning("Issues found:")
